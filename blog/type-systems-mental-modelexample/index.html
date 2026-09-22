@@ -1,0 +1,29 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="description" content="Thinking about types not as compiler checks, but as documentation that can't lie."><meta name="author" content="ht4w5"><link rel="alternate" type="application/rss+xml" title="ht4w5" href="/feed.xml"><title>Type Systems as a Mental Model - ht4w5</title><link rel="stylesheet" href="/_astro/BaseLayout.5FDnTu9K.css"></head><body><nav class="site-nav"><div class="container"><span class="site-title"><a href="/">ht4w5</a></span><ul class="nav-links"><li><a href="/">[posts]</a></li><li><a href="/about">[about]</a></li><li><a href="/tags">[tags]</a></li><li><a href="/feed.xml">[feed]</a></li></ul><div class="search-wrapper"><input type="text" class="search-input" placeholder="Search…" aria-label="Search posts"><div class="search-results" id="search-results"></div></div></div></nav><main class="container"><div class="post-layout"><article><header class="post-header"><h1>Type Systems as a Mental Model</h1><time class="post-date" datetime="2025-01-28">2025-01-28</time><div class="tag-pills"><a href="/tags/programming" class="tag-pill" style="--hue: 192">programming</a><a href="/tags/type-theory" class="tag-pill" style="--hue: 31">type-theory</a></div></header><div class="post-content"><p>I used to think of types as the compiler being annoying. Now I think of them as documentation that can’t get out of sync with the code.</p>
+<h2 id="the-key-insight">The Key Insight<a class="heading-anchor" href="#the-key-insight">#</a></h2>
+<p>When you write:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="typescript"><code><span class="line"><span style="color:#F97583">function</span><span style="color:#B392F0"> fetchUser</span><span style="color:#E1E4E8">(</span><span style="color:#FFAB70">id</span><span style="color:#F97583">:</span><span style="color:#79B8FF"> string</span><span style="color:#E1E4E8">)</span><span style="color:#F97583">:</span><span style="color:#B392F0"> Promise</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">User</span><span style="color:#F97583"> |</span><span style="color:#79B8FF"> null</span><span style="color:#E1E4E8">> {</span></span>
+<span class="line"><span style="color:#6A737D">  // ...</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<p>You’re not just satisfying the compiler. You’re telling every future reader:</p>
+<ul>
+<li>This function takes a string ID</li>
+<li>It returns a promise</li>
+<li>The user might not exist</li>
+</ul>
+<p>That’s three pieces of documentation that are always accurate, because the compiler enforces them.</p>
+<h2 id="types-as-design-tools">Types as Design Tools<a class="heading-anchor" href="#types-as-design-tools">#</a></h2>
+<p>The real power isn’t in catching bugs — it’s in <em>designing</em> your data model. If you can’t represent an invalid state in your types, you can’t have that bug at runtime.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="rust"><code><span class="line"><span style="color:#6A737D">// Impossible to have a "loading" state with an error</span></span>
+<span class="line"><span style="color:#F97583">enum</span><span style="color:#B392F0"> LoadingState</span><span style="color:#E1E4E8">&#x3C;</span><span style="color:#B392F0">T</span><span style="color:#E1E4E8">> {</span></span>
+<span class="line"><span style="color:#B392F0">    Loading</span><span style="color:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#B392F0">    Loaded</span><span style="color:#E1E4E8">(</span><span style="color:#B392F0">T</span><span style="color:#E1E4E8">),</span></span>
+<span class="line"><span style="color:#B392F0">    Error</span><span style="color:#E1E4E8">(</span><span style="color:#B392F0">String</span><span style="color:#E1E4E8">),</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<h2 id="when-types-get-in-the-way">When Types Get in the Way<a class="heading-anchor" href="#when-types-get-in-the-way">#</a></h2>
+<p>There are legitimate cases where strict types slow you down:</p>
+<ul>
+<li>Prototyping and exploration</li>
+<li>Highly dynamic data (like JSON from external APIs)</li>
+<li>One-off scripts</li>
+</ul>
+<p>The trick is knowing when the investment in types pays off. For code that will be maintained by more than one person, or live longer than a week — types almost always pay for themselves.</p></div><nav class="post-nav"><a href="/blog/static-site-generatorexample">[prev: Why I Built My Blog with a Static Site Generator]</a><a href="/">[home]</a><a href="#">[top]</a><a href="/blog/linux-process-managementexample">[next: Linux Process Management Essentials]</a></nav></article><nav class="toc" aria-label="Table of contents"><span class="toc-title">Contents</span><ol class="toc-list"><li class="toc-item toc-depth-2"><a href="#the-key-insight">The Key Insight</a></li><li class="toc-item toc-depth-2"><a href="#types-as-design-tools">Types as Design Tools</a></li><li class="toc-item toc-depth-2"><a href="#when-types-get-in-the-way">When Types Get in the Way</a></li></ol></nav></div></main><footer class="site-footer"><div class="container"><p>© 2026 ht4w5</p><p><a href="https://creativecommons.org/licenses/by-nc-sa/4.0/"><img src="/images/cc-by-nc-sa.svg" alt="CC BY-NC-SA 4.0" width="88" height="31"></a></p></div></footer><script type="module" src="/_astro/BaseLayout.astro_astro_type_script_index_0_lang.Bemhi2NW.js"></script></body></html>
