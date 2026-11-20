@@ -1,0 +1,85 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="description" content="Reusing slices with sync.Pool in Go, and why pooling a slice value allocates on every put."><meta name="author" content="ht4w5"><link rel="icon" type="image/svg+xml" href="/favicon.png"><link rel="alternate" type="application/rss+xml" title="ht4w5" href="/feed.xml"><title>Pooling slices in Go without extra allocations - ht4w5</title><script type="module">(function(){let e=localStorage.getItem(`theme`);e&&document.documentElement.setAttribute(`data-theme`,e)})();</script><link rel="stylesheet" href="/_astro/BaseLayout.DOUi8h_W.css"></head><body><nav class="site-nav"><div class="container"><span class="site-title"><a href="/">ht4w5</a></span><ul class="nav-links"><li><a href="/">[posts]</a></li><li><a href="/about">[about]</a></li><li><a href="/tags">[tags]</a></li><li><a href="/dirs">[dirs]</a></li><li><a href="/feed.xml">[feed]</a></li></ul><div class="search-wrapper"><span class="search-bracket"><input type="text" class="search-input" placeholder="search" aria-label="Search posts"></span><button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">◐</button><div class="search-results" id="search-results"></div></div></div></nav><main class="container"><div class="post-layout"><article><header class="post-header"><h1>Pooling slices in Go without extra allocations</h1><time class="post-date" datetime="2026-11-20">2026-11-20</time><div class="tag-pills"><a href="/tags/Go" class="tag-pill" style="--hue: 123">Go</a><a href="/tags/optimization" class="tag-pill" style="--hue: 292">optimization</a></div></header><div class="post-content"><p>Sometimes in Go we reuse allocated slices with <a href="https://pkg.go.dev/sync#Pool">sync.Pool</a> to reduce GC pressure. What might feel intuitive to write (at least to me as a beginner) is something like this:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="go"><code><span class="line"><span style="color:#F97583">var</span><span style="color:#E1E4E8"> slicePool </span><span style="color:#F97583">=</span><span style="color:#B392F0"> sync</span><span style="color:#E1E4E8">.</span><span style="color:#B392F0">Pool</span><span style="color:#E1E4E8">{</span></span>
+<span class="line"><span style="color:#E1E4E8">	New: </span><span style="color:#F97583">func</span><span style="color:#E1E4E8">() </span><span style="color:#B392F0">any</span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#F97583">		return</span><span style="color:#B392F0"> make</span><span style="color:#E1E4E8">([]</span><span style="color:#F97583">byte</span><span style="color:#E1E4E8">, </span><span style="color:#79B8FF">10</span><span style="color:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#E1E4E8">	},</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">func</span><span style="color:#B392F0"> getSlice</span><span style="color:#E1E4E8">() []</span><span style="color:#F97583">byte</span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#F97583">	return</span><span style="color:#E1E4E8"> slicePool.</span><span style="color:#B392F0">Get</span><span style="color:#E1E4E8">().([]</span><span style="color:#F97583">byte</span><span style="color:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">func</span><span style="color:#B392F0"> putSlice</span><span style="color:#E1E4E8">(</span><span style="color:#FFAB70">s</span><span style="color:#E1E4E8"> []</span><span style="color:#F97583">byte</span><span style="color:#E1E4E8">) {</span></span>
+<span class="line"><span style="color:#E1E4E8">	slicePool.</span><span style="color:#B392F0">Put</span><span style="color:#E1E4E8">(s)</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<p>However this is actually sub-optimal and triggers an allocation every time we put a slice in the pool.</p>
+<h2 id="interface-assignment-allocation">Interface assignment allocation<a class="heading-anchor" href="#interface-assignment-allocation">#</a></h2>
+<p>In the previous example, when we call <code>slicePool.Put(s)</code>, the value of <code>s</code> is assigned to an <code>any</code> or <code>interface{}</code> type<sup><a href="#user-content-fn-1" id="user-content-fnref-1" data-footnote-ref="" aria-describedby="footnote-label">1</a></sup> in <a href="https://pkg.go.dev/sync#Pool.Put">sync.Pool.Put</a>. Since the slice header is almost always larger than a word and its value is escaping to the pool, the header is allocated and copied to the heap and the interface type stores a pointer to it. (<code>getSlice</code> also creates an <code>interface{}</code> with the slice header value but since it does not escape, the value is put on the stack.) The allocated slice header is never reused because we’re not maintaining a reference to it when getting slices. Therefore every get-put cycle creates a new allocation, diminishing the effects of slice reuse.</p>
+<p>An example:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="go"><code><span class="line"><span style="color:#F97583">package</span><span style="color:#B392F0"> main</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> (</span></span>
+<span class="line"><span style="color:#9ECBFF">	"</span><span style="color:#B392F0">fmt</span><span style="color:#9ECBFF">"</span></span>
+<span class="line"><span style="color:#9ECBFF">	"</span><span style="color:#B392F0">testing</span><span style="color:#9ECBFF">"</span></span>
+<span class="line"><span style="color:#E1E4E8">)</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">var</span><span style="color:#E1E4E8"> iface </span><span style="color:#B392F0">any</span><span style="color:#6A737D"> // Package level so value escapes.</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">func</span><span style="color:#B392F0"> main</span><span style="color:#E1E4E8">() {</span></span>
+<span class="line"><span style="color:#E1E4E8">	buf </span><span style="color:#F97583">:=</span><span style="color:#B392F0"> make</span><span style="color:#E1E4E8">([]</span><span style="color:#F97583">byte</span><span style="color:#E1E4E8">, </span><span style="color:#79B8FF">4</span><span style="color:#E1E4E8">)</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#E1E4E8">	fmt.</span><span style="color:#B392F0">Println</span><span style="color:#E1E4E8">(testing.</span><span style="color:#B392F0">AllocsPerRun</span><span style="color:#E1E4E8">(</span><span style="color:#79B8FF">1000</span><span style="color:#E1E4E8">, </span><span style="color:#F97583">func</span><span style="color:#E1E4E8">() { iface </span><span style="color:#F97583">=</span><span style="color:#E1E4E8"> buf }))</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>1</span></span></code></pre>
+<h2 id="the-better-approach">The better approach<a class="heading-anchor" href="#the-better-approach">#</a></h2>
+<p>A pointer to the slice header should be used instead because pointers can be put into an <code>interface{}</code> without an allocation<sup><a href="#user-content-fn-2" id="user-content-fnref-2" data-footnote-ref="" aria-describedby="footnote-label">2</a></sup>. A straightforward example:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="go"><code><span class="line"><span style="color:#F97583">var</span><span style="color:#E1E4E8"> slicePtrPool </span><span style="color:#F97583">=</span><span style="color:#B392F0"> sync</span><span style="color:#E1E4E8">.</span><span style="color:#B392F0">Pool</span><span style="color:#E1E4E8">{</span></span>
+<span class="line"><span style="color:#E1E4E8">	New: </span><span style="color:#F97583">func</span><span style="color:#E1E4E8">() </span><span style="color:#B392F0">any</span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#E1E4E8">		b </span><span style="color:#F97583">:=</span><span style="color:#B392F0"> make</span><span style="color:#E1E4E8">([]</span><span style="color:#F97583">byte</span><span style="color:#E1E4E8">, </span><span style="color:#79B8FF">10</span><span style="color:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#F97583">		return</span><span style="color:#F97583"> &#x26;</span><span style="color:#E1E4E8">b</span></span>
+<span class="line"><span style="color:#E1E4E8">	},</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">func</span><span style="color:#B392F0"> getPtrSlice</span><span style="color:#E1E4E8">() </span><span style="color:#F97583">*</span><span style="color:#E1E4E8">[]</span><span style="color:#F97583">byte</span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#F97583">	return</span><span style="color:#E1E4E8"> slicePtrPool.</span><span style="color:#B392F0">Get</span><span style="color:#E1E4E8">().(</span><span style="color:#F97583">*</span><span style="color:#E1E4E8">[]</span><span style="color:#F97583">byte</span><span style="color:#E1E4E8">)</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">func</span><span style="color:#B392F0"> putPtrSlice</span><span style="color:#E1E4E8">(</span><span style="color:#FFAB70">s</span><span style="color:#F97583"> *</span><span style="color:#E1E4E8">[]</span><span style="color:#F97583">byte</span><span style="color:#E1E4E8">) {</span></span>
+<span class="line"><span style="color:#E1E4E8">	slicePtrPool.</span><span style="color:#B392F0">Put</span><span style="color:#E1E4E8">(s)</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<p>In this approach, an extra slice header is allocated on the heap with each slice, but it is always reused because the pool tracks the pointer to it.</p>
+<p>Note that we don’t need to do this with maps, channels or functions because they are already pointers.</p>
+<h2 id="a-common-pattern">A common pattern<a class="heading-anchor" href="#a-common-pattern">#</a></h2>
+<p>It’s awkward to work with slice pointers, so in practice I usually don’t pool slices. Instead, I like to pool structs that own a slice:</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="go"><code><span class="line"><span style="color:#F97583">const</span><span style="color:#E1E4E8"> (</span></span>
+<span class="line"><span style="color:#79B8FF">	chunkSize</span><span style="color:#F97583">    =</span><span style="color:#79B8FF"> 1</span><span style="color:#F97583"> &#x3C;&#x3C;</span><span style="color:#79B8FF"> 16</span><span style="color:#6A737D"> // 64KB</span></span>
+<span class="line"><span style="color:#E1E4E8">)</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">var</span><span style="color:#E1E4E8"> chunkPool </span><span style="color:#F97583">=</span><span style="color:#B392F0"> sync</span><span style="color:#E1E4E8">.</span><span style="color:#B392F0">Pool</span><span style="color:#E1E4E8">{</span></span>
+<span class="line"><span style="color:#E1E4E8">	New: </span><span style="color:#F97583">func</span><span style="color:#E1E4E8">() </span><span style="color:#B392F0">any</span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#F97583">		return</span><span style="color:#F97583"> &#x26;</span><span style="color:#B392F0">chunk</span><span style="color:#E1E4E8">{</span></span>
+<span class="line"><span style="color:#E1E4E8">			b: </span><span style="color:#B392F0">make</span><span style="color:#E1E4E8">([]</span><span style="color:#F97583">byte</span><span style="color:#E1E4E8">, chunkSize),</span></span>
+<span class="line"><span style="color:#E1E4E8">		}</span></span>
+<span class="line"><span style="color:#E1E4E8">	},</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">type</span><span style="color:#B392F0"> chunk</span><span style="color:#F97583"> struct</span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#E1E4E8">	b        []</span><span style="color:#F97583">byte</span></span>
+<span class="line"><span style="color:#E1E4E8">	useCount </span><span style="color:#F97583">int</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span></code></pre>
+<p>The pool tracks pointers to <code>chunk</code> and we can access the slice naturally with <code>chunk.b</code>.</p>
+<h2 id="see-also">See also<a class="heading-anchor" href="#see-also">#</a></h2>
+<ul>
+<li><a href="https://golang.design/under-the-hood/en/part2lang/ch04type/interface">https://golang.design/under-the-hood/en/part2lang/ch04type/interface</a>: cases of interface boxing decisions.</li>
+<li><a href="https://victoriametrics.com/blog/go-sync-pool">https://victoriametrics.com/blog/go-sync-pool</a>: Go <code>sync.Pool</code> mechanics.</li>
+</ul>
+<section data-footnotes="" class="footnotes"><h2 class="sr-only" id="footnote-label">Footnotes<a class="heading-anchor" href="#footnote-label">#</a></h2>
+<ol>
+<li id="user-content-fn-1">
+<p><code>any</code> is an alias for <code>interface{}</code> and is equivalent to <code>interface{}</code> in all ways. See <a href="https://pkg.go.dev/builtin#any">https://pkg.go.dev/builtin#any</a>. <a href="#user-content-fnref-1" data-footnote-backref="" aria-label="Back to reference 1" class="data-footnote-backref">↩</a></p>
+</li>
+<li id="user-content-fn-2">
+<p>See <a href="https://github.com/golang/go/blob/7b2881024c95a11ddb86663a616340aa3a88b67f/src/sync/example_pool_test.go#L17">https://github.com/golang/go/blob/7b2881024c95a11ddb86663a616340aa3a88b67f/src/sync/example_pool_test.go#L17</a>. <a href="#user-content-fnref-2" data-footnote-backref="" aria-label="Back to reference 2" class="data-footnote-backref">↩</a></p>
+</li>
+</ol>
+</section></div><nav class="post-nav"><a href="/blog/hello-world">[prev: Test]</a><a href="/">[home]</a><a href="#">[top]</a></nav></article><nav class="toc" aria-label="Table of contents"><span class="toc-title">Contents</span><ol class="toc-list"><li class="toc-item toc-depth-2"><a href="#interface-assignment-allocation">Interface assignment allocation</a></li><li class="toc-item toc-depth-2"><a href="#the-better-approach">The better approach</a></li><li class="toc-item toc-depth-2"><a href="#a-common-pattern">A common pattern</a></li><li class="toc-item toc-depth-2"><a href="#see-also">See also</a></li></ol></nav><script type="module">var e=document.querySelector(`.toc`);if(e){let t=[];for(let n of e.querySelectorAll(`.toc a`)){let e=document.getElementById(decodeURIComponent(n.hash.slice(1))),r=n.closest(`.toc-item`);e&&r&&t.push({link:n,item:r,heading:e})}let n=null;function r(t){let n=t.item.getBoundingClientRect().top-e.getBoundingClientRect().top+e.scrollTop,r=n+t.item.offsetHeight;n<e.scrollTop?e.scrollTop=n:r>e.scrollTop+e.clientHeight&&(e.scrollTop=r-e.clientHeight)}function i(e){e!==n&&(n&&(n.item.classList.remove(`is-active`),n.link.removeAttribute(`aria-current`)),n=e,n&&(n.item.classList.add(`is-active`),n.link.setAttribute(`aria-current`,`true`),r(n)))}function a(){let e=window.scrollY+120,n=null;for(let r of t)if(r.heading.getBoundingClientRect().top+window.scrollY<=e)n=r;else break;t.length>0&&window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-2&&(n=t[t.length-1]),i(n)}window.addEventListener(`scroll`,a,{passive:!0}),window.addEventListener(`resize`,a),a()}</script></div></main><footer class="site-footer"><div class="container"><p>© 2026 ht4w5</p><ul class="footer-badges"><!-- ===== PASTE BADGES BELOW — one <li> per badge, one per line ===== --><li><a href="https://creativecommons.org/licenses/by-nc-sa/4.0/"><img src="/images/cc-by-nc-sa.svg" alt="CC BY-NC-SA 4.0"></a></li><!-- ===== END BADGES ===== --></ul></div></footer><script type="module" src="/_astro/BaseLayout.astro_astro_type_script_index_1_lang.BpgOrgH4.js"></script></body></html>
